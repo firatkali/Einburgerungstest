@@ -1,8 +1,15 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { UserProgress } from '../../types';
 import { useTranslation } from '../../i18n';
 import { useExam } from '../../hooks/useExam';
 import { getQuestionOptions, getQuestionText } from '../../lib/language';
+import {
+  findBestFittingQuestionFontSize,
+  getCachedQuestionFontSize,
+  getQuestionFontCacheKey,
+  getQuestionFontConfig,
+  setCachedQuestionFontSize,
+} from '../../lib/question-typography';
 import { AnswerOption } from '../../components/AnswerOption';
 
 type Props = {
@@ -20,11 +27,16 @@ export function ExamScreen({ progress, onExamComplete, onAbort }: Props) {
   const { exam, startExam, submitAnswer, goToNext, submitExam, abortExam } = useExam();
   const [showConfirmSubmit, setShowConfirmSubmit] = useState(false);
   const [showConfirmAbort, setShowConfirmAbort] = useState(false);
-  const [questionFontSize, setQuestionFontSize] = useState(26);
   const startTimeRef = useRef<number>(Date.now());
   const questionBodyRef = useRef<HTMLDivElement | null>(null);
+  const questionTextRef = useRef<HTMLParagraphElement | null>(null);
   const q = exam.phase === 'idle' ? null : exam.questions[exam.currentIndex];
   const qText = q ? getQuestionText(q, progress.language) : '';
+  const fontCacheKey = q ? getQuestionFontCacheKey('exam', q, progress.language) : null;
+  const fontConfig = getQuestionFontConfig('exam', progress.language);
+  const [questionFontSize, setQuestionFontSize] = useState(
+    () => (fontCacheKey ? getCachedQuestionFontSize(fontCacheKey) : undefined) ?? fontConfig.defaultSize
+  );
 
   useEffect(() => {
     if (progress.selectedState && exam.phase === 'idle') {
@@ -39,17 +51,33 @@ export function ExamScreen({ progress, onExamComplete, onAbort }: Props) {
     }
   }, [exam.phase, exam.result, onExamComplete]);
 
-  useEffect(() => {
-    setQuestionFontSize(26);
-  }, [exam.currentIndex]);
+  useLayoutEffect(() => {
+    if (!q || !fontCacheKey) return;
 
-  useEffect(() => {
-    const el = questionBodyRef.current;
-    if (!el) return;
-    if (el.scrollHeight > el.clientHeight && questionFontSize > 18) {
-      setQuestionFontSize(prev => prev - 1);
+    const cachedFontSize = getCachedQuestionFontSize(fontCacheKey);
+    if (cachedFontSize) {
+      if (cachedFontSize !== questionFontSize) {
+        setQuestionFontSize(cachedFontSize);
+      }
+      return;
     }
-  }, [qText, questionFontSize]);
+
+    const container = questionBodyRef.current;
+    const textElement = questionTextRef.current;
+    if (!container || !textElement) return;
+
+    const bestFontSize = findBestFittingQuestionFontSize(
+      container,
+      textElement,
+      fontConfig.minSize,
+      fontConfig.maxSize
+    );
+
+    setCachedQuestionFontSize(fontCacheKey, bestFontSize);
+    if (bestFontSize !== questionFontSize) {
+      setQuestionFontSize(bestFontSize);
+    }
+  }, [fontCacheKey, fontConfig.maxSize, fontConfig.minSize, q, qText, questionFontSize]);
 
   if (exam.phase === 'idle') {
     return (
@@ -144,6 +172,7 @@ export function ExamScreen({ progress, onExamComplete, onAbort }: Props) {
         <div className="rounded-3xl border border-[#A0B0C0]/20 bg-[#1A2B40] p-5 mb-4 h-[164px] overflow-hidden">
           <div ref={questionBodyRef} className="h-full overflow-hidden pr-1">
             <p
+              ref={questionTextRef}
               className="text-white font-semibold leading-[1.35]"
               style={{ fontSize: `${questionFontSize}px` }}
             >
